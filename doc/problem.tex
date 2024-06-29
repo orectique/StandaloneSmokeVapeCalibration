@@ -69,46 +69,111 @@
 	
 	\maketitle
 	
-	\section{Underlying Model}
+	The goal of smoking and vaping model calibration is to project uptake and cessation rates. The underlying model is a compartmental flow model on the following states:
+	\begin{itemize}
+		\item \path{n} - Someone who has never smoked or vaped.
+		\item \path{s} - Current smoker.
+		\item \path{v} - Current vaper.
+		\item \path{sv} - Someone who smokes and vapes.
+		\item \path{rs} - Someone who doesn't smoke or vape, who most recently quit smoking.
+		\item \path{rv} - Someone who doesn't smoke or vape, who most recently quit vaping.
+		\item \path{vrs} - Current vaper who previously quit smoking.
+		\item \path{dead} - Someone who has died. Differential mortality rates for smokers require us to track this state so that the prevalence estimates among the living make sense.
+	\end{itemize}
+	See \path{calibrationExample.png} for a diagram of the model. The plots on states are initial prevalence, while the plots on the tails of arrows are the rate from that state. The state \path{vrs} is omitted because flows out of \path{vrs} are identical to those out of \path{v}.
 	
-	The underlying model for smoking and vaping is a compartmental flow model. The model tracks $220$ cohort, where a \emph{cohort} is a combination of age and sex. The model is initialised with \path{initialPrevlance.csv} runs from year 2021 to 2039 inclusive. Within each year, the model increments ages and then evaluates the flows in the model.
+	Projections for the aggregate smoking and vaping rates are input to the model. We produce these in an earlier step. Since we already have aggregate projections, the calibration of the compartmental model has two purposes:
+	\begin{itemize}
+		\item Break down aggregate prevalences, to extract realistic estimates of dual users (\path{sv}), and people who quit into the future. Quit states are important due to lingering health impacts.
+		\item Provide flow rates between the states. These let us parameterise intervention models in terms of changes in uptake and cessation rates for specific cohorts, then watch the effect sweep through the population.
+	\end{itemize}
+	Unfortunately the true goal of calibration is a bit fuzzy, and we have only been able to encode a few of them so far. The final check is how `realistic' a set of outputs look, based on the expertise of people who spent decades studying smoking. This is the source of some of the weirder constraints.
 	
-	\subsubsection{Increment Ages}
-	The age of each cohort is incremented at the start of the year. In other words, the prevalence among a cohort of age $n$ at the start of year $t$ is equal to the prevalence of the cohort with age $n-1$ at the end of year $t-1$.
+	\section{Underlying Simulation Model}
 	
-	Cohorts of age $\geq 110$ are removed, and cohorts of age $0$ are inserted each year. The newly inserted cohorts are initialised with the never smoker state ($n$) set to $1$.
+	The model tracks 110 ages and two sexes, for a total of 220 cohorts. A compartmental model state exists for each cohort, where the sum of the states is always $1$. The state of each cohort is initialised from \path{initialPrevlance.csv}, and the model then runs from year 2021 to 2039 inclusive. Within each year, the model increments ages and then evaluates the flows in the model.
 	
-	\subsubsection{Evaluate Flows}
+	\subsection{Increment Ages}
+	The age of each cohort is incremented at the start of the year. In other words, the state of the model for a cohort of age $n$ at the start of year $t$ is equal to the state for the cohort with age $n-1$ at the end of year $t-1$. The age is incremented in first year of the model.
 	
-	Flows are evaluated using a rough approximation, because the rates tend to be low. The quality of the optimisation depends on the number of time steps used.
+	Cohorts are removed when they reach age 110, and new cohorts are added with age 0. The newly inserted cohorts are initialised with $\text{\path{n}} = 1$.
 	
-	The flow rate are determined by reading the base rate from \path{flow_rate.csv} and applying an annual percentage change (APC), relative to the base year, from \path{flow_apc.csv}. The flow from state $x$ to state $y$ is denoted \path{x_y} in the file. Let $S$ be the states (compartments) of the model, then for $x,y \in S$, the flow rate in year $t$ is
+	\subsection{Evaluate Flows}
+	
+	Flows between states are evaluated using a rough approximation, because the flow rates tend to be low. The quality of the optimisation depends on the number of time steps used. The number of steps per year defaults to $4$.
+	
+	Flow rate are determined by reading the base rate from \path{flow_rates.csv} and applying an annual percentage change (APC), relative to the base year, from \path{flow_apc.csv}. Note that these files are indexed by current age, not by year of birth, so a birth cohort will find itself sweeping across different base flow rates.
+	
+	The flow from state $x$ to state $y$ is denoted \path{x_y} in the flow files. Let $S$ be the states of the model, then for $x,y \in S$, the flow rate in year $t$ is
 	\begin{align*}
 		r_{x, y, t} := b_{x,y} (1 + a_{x,y})^{t - 2021}
 	\end{align*}
 	where $b_{x, y}$ is base rate and $a_{x,y}$ is the APC.
 	
-	The flows are applied over a number of time steps, $s$, which defaults to $4$. Within each time step, the total flow out of a state, $x \in S$, is
+	The flows are applied over a number of time steps, $s$. For $x \in S$ and year $t$, define
 	\begin{align*}
 		f_{x, t} := \sum_{s \in S} r_{x, y, t}
 	\end{align*}
-	and the mass that flows from state $x$ to $y \in S$ is
+	then the mass that flows from $x$ to $y \in S$ is
 	\begin{align*}
 		p_{x, y, t} :=\left(1 - e^\frac{-f_{x, t}}{s}\right) \frac{r_{x, y, t}}{f_{x, t}}.
 	\end{align*}
-	Essentially, the flow \emph{rate} out of $x$ is being converted to a proportion, then split proportionally by the contribution each individual flow makes to the rate.
+	Essentially, we convert the total flow \emph{rate}, $f_{x, t}$, into the amount of flow in $1/s$ years, then proportionally split the flow between recipients.
 	
-	The mass, $m_{x}$ of a state is then updated as follows
+	The mass, $m_{x, t}$ of a state is then updated as follows
 	\begin{align*}
-		\text{out}_x :=& m_x\sum_{s \in S} p_{x,s} \\
-		\text{in}_x :=& \sum_{s \in S}m_s p_{s,x} \\
-		m_x \xrightarrow{\text{update}}& m_x - \text{out}_x + \text{in}_x
+		\text{out}_{x, t} :=& m_{x, t}\sum_{s \in S} p_{x, s, t} \\
+		\text{in}_{x, t} :=& \sum_{s \in S}m_{s, t} p_{s,x, t} \\
+		m_{x, t} \xrightarrow{\text{update}}& m_{x, t} - \text{out}_x + \text{in}_x
 	\end{align*}
 	
-	This process is repeated $s$ times per year.
+	This process is repeated $s$ times per year, with the final update to $m_{x, t}$ being used as the state output from the model for the cohort in year $t$.
 	
-	\section{Optimisation}
+	\section{Calibration}
 	
-	The model is 
+	The model is calibrated by modifying a limited set of base flow rates and APCs. The male and female cohorts can be calibrated separately, so sex is ignored for the following section.
 	
+	\subsubsection{agecategory}\label{sec:agec}
+	Some input files have agecategory rather than age as part of their index. These files are interpreted by expanding each row to cover all ages up to the following agecatgory. The final age category expands up to age 109 inclusive.
+	
+	\subsection{Objective Function}
+	The target of the model is the sum of the square of the difference between the prevalence values calculated for each year, and the values in \path{prevalenceTargets.csv}. The target file sets aggregate smoking and vaping targets, rather than targets for particular states in the compartmental model. The aggregates map to the states as follows, and are computed from model output at the end of each year as follows.
+	\begin{align*}
+		\text{smoking} &= \left(\text{\path{s}} + \text{\path{sv}}\right) / (1 - \text{\path{dead}}) \\
+		\text{vaping} &= \left(\text{\path{v}} + \text{\path{vrs}} + \text{\path{sv}}\right) / (1 - \text{\path{dead}})
+	\end{align*}
+	Contributions to the score are weighted by \path{scoreWeight.csv}. The weights are not a particularly important part of the objective function. Supporting them is good, but I am not wedded to these particular weights.
+	
+	In summary, the objective function scores the output of a model as follows.
+	\begin{align*}
+		\text{score} := \sum_{a \in [0\ldots110]} \sum_{t \in [2021\ldots2040]} \sum_{B \in \{\text{smoking}, \text{vaping}\}}\left(w_{a, t, B} \left(\text{target $B$}_{a, t} - \text{model $B$}_{a, t}\right)\right)^2
+	\end{align*}
+	The weights are squared for technical reasons to do with how the full framework processes cohort comparisons. This detail is also unimportant.
+	
+	\subsection{Parameter Space}
+	The parameter space consists of the 180 ($6 \times 2 \times 15$) combinations of the following factors.
+	\begin{itemize}
+		\item The flows \path{n_s}, \path{s_rs}, \path{n_v}, \path{v_rv}, \path{s_vrs} and \path{v_s}.
+		\item The base rate and APC of the flows are separate parameters.
+		\item The age `pins' 0, 14, 15, 16, 18, 21, 24, 28, 33, 40, 50, 60, 70, 90 and 109.
+	\end{itemize}
+	The rest of the content of the flow files are either static, or derived from the above parameters.
+	
+	The values for the remaining ages are set by linear interpolation between the pins. The 14, 15, 16 pins allow for sudden sharp uptake rates at age 15, to capture pre-15 prevalence, and the pins are more frequent for younger ages as the calibration target shows sharper changes in behaviour at these ages.
+	
+	The full list of flows can be found in the column names of \path{flow_rates.csv}. Many of these flows are derived from the six that are directly varied in the parameter space. The file \path{flowInteractions.csv} defines these relationships, with column \path{arc1 from arc2} meaning that the values of \path{arc1} are determined by \path{arc2}.
+	\begin{itemize}
+		\item Derived columns of \path{flow_rates.csv} use the data in \path{flowInteractions.csv}, eg, the value of \path{v_sv} is $1.42$ times the value of \path{n_s} for 19 year olds.
+		\item Derived columns of \path{flow_apc.csv} always copy the source column. In other words, the multiplier is always 1.
+	\end{itemize}
+	These interactions are in place to cut down the size of the parameter space, and to encode what literature exists on increased smoking and vaping update rates for people who already vape or smoke, respectively.
+	
+	The range of each parameter is defined by the \path{flow_apc_upper}, \path{flow_apc_lower}, \path{flow_rate_upper} and \path{flow_rate_lower} files. These latter two files are indexed by agecategory, which can be expanded in ages, as explained in Section \ref{sec:agec}. In practise the model has fewer than 180 parameters since many of them have and upper and lower bound of zero.
+	
+	The parameter space has an additional constraint to cut down on extreme or spiky behaviour. This constraint requires that the value among certain collections of pins be uni-modal, ie that they have a unique local maximum. The sets of pins are as follows.
+	\begin{itemize}
+		\item \path{[16, 18, 21, 24, 28, 33, 40]}
+		\item \path{[40, 50, 60, 70, 90, 109]}
+	\end{itemize}
+	Note that the pin at age 15 does not appear. It is unconstrained so that earlier smoking can be captured by a sudden spike of uptake.
 \end{document}
