@@ -1,9 +1,21 @@
 import pandas as pd
 import numpy as np
+import numba
 
-class pmslt:
+@numba.jit
+def get_r(apc, rates, t):
+    return np.power(rates * (1 + apc), (t - 2021))
+
+class pmsltModel:
+    """
+    This class implements the PMSLT model for smoking and vaping prevalence
+    """
     def __init__(self, timesteps: int = 4, sex: str = "Male") -> None:
-        
+        """
+        Initializes the PMSLT model with the given initial and target prevalence data.
+
+        Also creates a set up flows, states, and flow lookup dictionary.
+        """        
         self.initPrev = f"../data/initialPrevalence{sex}.csv"
         self.prevState = pd.read_csv(self.initPrev)
         self.sex = sex.lower()
@@ -29,23 +41,36 @@ class pmslt:
         self.s = timesteps
         
         self.targets = pd.read_csv(f"../data/prevalenceTargets{sex}.csv")
+        self.dictStates = {}
 
-    def mse_score(self, outputs: pd.DataFrame, year: int) -> float:
+    def se_score(self, outputs: pd.DataFrame, year: int) -> float:
+        """
+        Calculates the mean squared error between the model outputs and the target prevalence data for a given year.
+
+        Currently unweighted.
+        """
         targets = self.targets[self.targets['year'] == year]
         score = np.sum(np.square(outputs['smoking'] - targets['smoking']) + np.square(outputs['vaping'] - targets['vaping']))
         return score
 
     def pmslt(self, rates, apc, t1 = 2021, t2 = 2039) -> pd.DataFrame:
-        if np.shape(rates) != np.shape(apc):
+        """
+        The core PMSLT model implementation. Takes in flow rates and APCs and returns the performance score of the model.
+
+        The functions follow the PMSLT model equations as described in the problem paper.
+        """  
+        if np.shape(rates) != np.shape(apc): # making sure the dimensions are same (To allow for matrix multiplication)
             print("Error: flow rates and flow apc must have the same shape")
             return
         
-        self.prevState = pd.read_csv(self.initPrev)
+        self.prevState = pd.read_csv(self.initPrev) # reset the model to the initial state
         score = 0
 
-        for t in range(t1, t2 + 1):
-            r = rates * (1 + apc)**(t - 2021)
-            r = pd.DataFrame(r, columns= self.flows)
+        for t in range(t1, t2 + 1): # loop through the years
+
+            self.dictStates[t] = self.prevState.copy()
+            #r = np.power(rates * (1 + apc), (t - 2021))
+            r = pd.DataFrame(get_r(rates, apc, t), columns= self.flows)
 
             for statex in self.x:
                 r[f"f_{statex}"] = r[self.flowsLookup[statex]].sum(axis=1)
@@ -80,9 +105,9 @@ class pmslt:
             prevModel["smoking"] = (prevModel["s"] + prevModel["sv"])/(1 - prevModel["dead"])
             prevModel["vaping"] = (prevModel["v"] + prevModel["sv"] + prevModel["vrs"])/(1 - prevModel["dead"])
 
-            score += self.mse_score(prevModel[["age", "sex", "smoking", "vaping"]], t)
+            score += self.se_score(prevModel[["age", "sex", "smoking", "vaping"]], t)
 
-            return score
+        return score, prevModel
 
 
         
