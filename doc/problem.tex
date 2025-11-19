@@ -104,7 +104,9 @@
 	
 	Flow rate are determined by reading the base rate from \path{flow_rates.csv} and applying an annual percentage change (APC), relative to the base year, from \path{flow_apc.csv}. Note that these files are indexed by current age, not by year of birth, so a birth cohort will find itself sweeping across different base flow rates.
 	
-	The flow from state $x$ to state $y$ is denoted \path{x_y} in the flow files. Let $S$ be the states of the model, then for $x,y \in S$, the flow rate in year $t$ is
+	The flow from state $x$ to state $y$ is denoted \path{x_y} in the flow files. The flow graph is a directed graph with an incomplete number of arcs. For example, flows \path{s_sv}, \path{sv_s} and \path{n_s} each exist independently, but not \path{s_n}. 
+	
+	Let $S$ be the states of the model, then for $x,y \in S$, the flow rate in year $t$ is
 	\begin{align*}
 		r_{x, y, t} := b_{x,y} (1 + a_{x,y})^{t - 2021}
 	\end{align*}
@@ -157,13 +159,14 @@
 		\item The base rate and APC of the flows are separate parameters.
 		\item The age `pins' 0, 14, 15, 16, 18, 21, 24, 28, 33, 40, 50, 60, 70, 90 and 109.
 	\end{itemize}
-	The rest of the content of the flow files are either static, or derived from the above parameters.
+	The \path{<x>_dead} flows are static, so they should appear as they are in the original flow file. The other parameters are derived from the directly from the flows in the parameter space.
 	
 	The values for the remaining ages are set by linear interpolation between the pins. The 14, 15, 16 pins allow for sudden sharp uptake rates at age 15, to capture pre-15 prevalence, and the pins are more frequent for younger ages as the calibration target shows sharper changes in behaviour at these ages.
 	
 	The full list of flows can be found in the column names of \path{flow_rates.csv}. Many of these flows are derived from the six that are directly varied in the parameter space. The file \path{flowInteractions.csv} defines these relationships, with column \path{arc1 from arc2} meaning that the values of \path{arc1} are determined by \path{arc2}.
 	\begin{itemize}
 		\item Derived columns of \path{flow_rates.csv} use the data in \path{flowInteractions.csv}, eg, the value of \path{v_sv} is $1.42$ times the value of \path{n_s} for 19 year olds.
+		\item \path{sv_rs} is also a derived column. Its value at each row is the minimum of \path{s_rs} and \path{v_rv}.
 		\item Derived columns of \path{flow_apc.csv} always copy the source column. In other words, the multiplier is always 1.
 	\end{itemize}
 	These interactions are in place to cut down the size of the parameter space, and to encode what literature exists on increased smoking and vaping update rates for people who already vape or smoke, respectively.
